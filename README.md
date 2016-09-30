@@ -9,13 +9,13 @@ forked from github.com/freshcn/qqwry
 
 demo
 ```
-	err := qqwry.Init(*datFile)
+	err := qqwry.Init("qqwry.dat")
 	if err != nil {
 		log.Panic(err)
 	}
 	count, _ := qqwry.Count()
 	du := time.Since(startTime)
-	log.Println("IP 库加载完成 共加载:", count, " 条 IP 记录, 所花时间:", du)
+	log.Println("IP load:", count, " records, cost:", du)
 	
 	qqWry, _ := qqwry.NewQQwry()
 	if res, err:=qqWry.Query("10.10.10.10");err!=nil{
