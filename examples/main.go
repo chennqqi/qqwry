@@ -2,16 +2,19 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"runtime"
-	"time"
-	"fmt"
 	"strings"
+	"time"
+
+	"github.com/chennqqi/qqwry"
 )
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	datFile := flag.String("qqwry", "./qqwry.dat", "纯真 IP 库的地址")
 	port := flag.String("port", "2060", "HTTP 请求监听端口号")
 	flag.Parse()

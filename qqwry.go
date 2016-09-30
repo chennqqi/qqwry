@@ -1,98 +1,118 @@
-package main
+package qqwry
 
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/axgle/mahonia"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/axgle/mahonia"
 )
 
-var IpData fileData
+/*------------------------------------------------------------------------------
+public
+------------------------------------------------------------------------------*/
+
+const (
+	INDEX_LEN       = 7    // 索引长度
+	REDIRECT_MODE_1 = 0x01 // 国家的类型, 指向另一个指向
+	REDIRECT_MODE_2 = 0x02 // 国家的类型, 指向一个指向
+)
+
+type ResultQQwry struct {
+	IP      string `json:"ip"`
+	Country string `json:"country"`
+	Area    string `json:"area"`
+}
+
+type QQWry interface {
+	Query(ip string) (ResultQQwry, error)
+}
+
+var ERR_QQWRY_ALREADY_INIT error
+var ERR_QQWRY_INVALID_IP error
+var ERR_QQWRY_NOT_FOUND error
+var ERR_QQWRY_NOT_INIT error
+
+/*------------------------------------------------------------------------------
+private
+------------------------------------------------------------------------------*/
+
+type fileData struct {
+	data  []byte
+	ipNum int64
+}
+
+type qqwry struct {
+	ipdata *fileData
+	offset int64
+}
+
+var ipData *fileData
+
+func init() {
+	ERR_QQWRY_ALREADY_INIT = errors.New("qqwry aleady init")
+	ERR_QQWRY_NOT_FOUND = errors.New("qqwry not found")
+	ERR_QQWRY_INVALID_IP = errors.New("qqwry invalid ip")
+	ERR_QQWRY_NOT_INIT = errors.New("qqwry not init")
+}
 
 // 初始化ip库数据到内存中
-func (f *fileData) InitIpData() (rs interface{}) {
+func Init(qqwryDatPath string) error {
+	if ipData != nil {
+		return ERR_QQWRY_ALREADY_INIT
+	}
 
 	// 判断文件是否存在
-	_, err := os.Stat(f.FilePath)
+	_, err := os.Stat(qqwryDatPath)
 	if err != nil && os.IsNotExist(err) {
-		rs = errors.New("文件不存在")
-		return
+		return err
 	}
 
-	// 打开文件句柄
-	f.Path, err = os.OpenFile(f.FilePath, os.O_RDONLY, 0400)
+	var fd fileData
+
+	tmpData, err := ioutil.ReadFile(qqwryDatPath)
 	if err != nil {
-		rs = err
-		return
+		return err
 	}
-	defer f.Path.Close()
+	fd.data = tmpData
 
-
-	tmpData, err := ioutil.ReadAll(f.Path)
-	if err != nil {
-		log.Println(err)
-		rs = err
-		return
-	}
-
-	f.Data = tmpData
-
-	buf := f.Data[0:8]
+	buf := tmpData[0:8]
 	start := binary.LittleEndian.Uint32(buf[:4])
 	end := binary.LittleEndian.Uint32(buf[4:])
 
-	f.IpNum = int64((end-start)/INDEX_LEN + 1)
+	fd.ipNum = int64((end-start)/INDEX_LEN + 1)
 
-	return true
+	ipData = &fd
+	return nil
 }
 
 // 新建 qqwry  类型
-func NewQQwry() QQwry {
-	return QQwry{
-		Data: &IpData,
+func NewQQwry() (QQWry, error) {
+	if ipData == nil {
+		return nil, ERR_QQWRY_NOT_INIT
 	}
+	return &qqwry{
+		ipdata: ipData,
+	}, nil
 }
 
-// 从文件中读取数据
-func (q *QQwry) ReadData(num int, offset ...int64) (rs []byte) {
-	if len(offset) > 0 {
-		q.SetOffset(offset[0])
-	}
-	nums := int64(num)
-	end := q.Offset+nums
-	dataNum := int64(len(q.Data.Data))
-	if (q.Offset > dataNum) {
-		return nil
+func (q *qqwry) Query(ip string) (ResultQQwry, error) {
+	res := ResultQQwry{}
+
+	if q.ipdata == nil {
+		return res, ERR_QQWRY_NOT_INIT
 	}
 
-	if (end > dataNum) {
-		end = dataNum
-	}
-	rs = q.Data.Data[q.Offset : end]
-	q.Offset = end
-	return
-}
-
-// 设置偏移量
-func (q *QQwry) SetOffset(offset int64) {
-	q.Offset = offset
-}
-
-func (q *QQwry) Find(ip string) (res resultQQwry) {
-
-	res = resultQQwry{}
-
-	res.Ip = ip
+	res.IP = ip
 	if strings.Count(ip, ".") != 3 {
-		return res
+		return res, ERR_QQWRY_INVALID_IP
 	}
 	offset := q.searchIndex(binary.BigEndian.Uint32(net.ParseIP(ip).To4()))
 	if offset <= 0 {
-		return
+		return res, ERR_QQWRY_NOT_FOUND
 	}
 
 	var country []byte
@@ -120,20 +140,18 @@ func (q *QQwry) Find(ip string) (res resultQQwry) {
 		area = q.readArea(offset + uint32(5+len(country)))
 	}
 
-
 	enc := mahonia.NewDecoder("gbk")
 	res.Country = enc.ConvertString(string(country))
 	res.Area = enc.ConvertString(string(area))
-
-	return
+	return res, nil
 }
 
-func (q *QQwry) readMode(offset uint32) byte {
-	mode := q.ReadData(1, int64(offset))
+func (q *qqwry) readMode(offset uint32) byte {
+	mode := q.readData(1, int64(offset))
 	return mode[0]
 }
 
-func (q *QQwry) readArea(offset uint32) []byte {
+func (q *qqwry) readArea(offset uint32) []byte {
 	mode := q.readMode(offset)
 	if mode == REDIRECT_MODE_1 || mode == REDIRECT_MODE_2 {
 		areaOffset := q.readUInt24()
@@ -148,12 +166,12 @@ func (q *QQwry) readArea(offset uint32) []byte {
 	return []byte("")
 }
 
-func (q *QQwry) readString(offset uint32) []byte {
-	q.SetOffset(int64(offset))
+func (q *qqwry) readString(offset uint32) []byte {
+	q.setOffset(int64(offset))
 	data := make([]byte, 0, 30)
 	buf := make([]byte, 1)
 	for {
-		buf = q.ReadData(1)
+		buf = q.readData(1)
 		if buf[0] == 0 {
 			break
 		}
@@ -162,8 +180,8 @@ func (q *QQwry) readString(offset uint32) []byte {
 	return data
 }
 
-func (q *QQwry) searchIndex(ip uint32) uint32 {
-	header := q.ReadData(8, 0)
+func (q *qqwry) searchIndex(ip uint32) uint32 {
+	header := q.readData(8, 0)
 
 	start := binary.LittleEndian.Uint32(header[:4])
 	end := binary.LittleEndian.Uint32(header[4:])
@@ -174,12 +192,12 @@ func (q *QQwry) searchIndex(ip uint32) uint32 {
 
 	for {
 		mid = q.getMiddleOffset(start, end)
-		buf = q.ReadData(INDEX_LEN, int64(mid))
+		buf = q.readData(INDEX_LEN, int64(mid))
 		_ip = binary.LittleEndian.Uint32(buf[:4])
 
 		if end-start == INDEX_LEN {
 			offset := byteToUInt32(buf[4:])
-			buf = q.ReadData(INDEX_LEN)
+			buf = q.readData(INDEX_LEN)
 			if ip < binary.LittleEndian.Uint32(buf[:4]) {
 				return offset
 			} else {
@@ -200,12 +218,12 @@ func (q *QQwry) searchIndex(ip uint32) uint32 {
 	return 0
 }
 
-func (q *QQwry) readUInt24() uint32 {
-	buf := q.ReadData(3)
+func (q *qqwry) readUInt24() uint32 {
+	buf := q.readData(3)
 	return byteToUInt32(buf)
 }
 
-func (q *QQwry) getMiddleOffset(start uint32, end uint32) uint32 {
+func (q *qqwry) getMiddleOffset(start uint32, end uint32) uint32 {
 	records := ((end - start) / INDEX_LEN) >> 1
 	return start + records*INDEX_LEN
 }
@@ -216,4 +234,28 @@ func byteToUInt32(data []byte) uint32 {
 	i |= (uint32(data[1]) << 8) & 0xff00
 	i |= (uint32(data[2]) << 16) & 0xff0000
 	return i
+}
+
+func (q *qqwry) readData(num int, offset ...int64) (rs []byte) {
+	if len(offset) > 0 {
+		q.setOffset(offset[0])
+	}
+	nums := int64(num)
+	end := q.offset + nums
+	dataNum := int64(len(q.ipdata.data))
+	if q.offset > dataNum {
+		return nil
+	}
+
+	if end > dataNum {
+		end = dataNum
+	}
+	rs = q.ipdata.data[q.offset:end]
+	q.offset = end
+	return
+}
+
+// 设置偏移量
+func (q *qqwry) setOffset(offset int64) {
+	q.offset = offset
 }
