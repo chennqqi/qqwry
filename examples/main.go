@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"runtime"
@@ -12,56 +14,59 @@ import (
 	"github.com/chennqqi/qqwry"
 )
 
+type IPQueryServer struct {
+	Port string
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	datFile := flag.String("qqwry", "./qqwry.dat", "纯真 IP 库的地址")
-	port := flag.String("port", "2060", "HTTP 请求监听端口号")
+	datFile := flag.String("qqwry", "./qqwry.dat", "IP纯真库路径")
+	port := flag.String("port", "8080", "HTTP 请求监听端口号")
 	flag.Parse()
 
-	IpData.FilePath = *datFile
-
-	startTime := time.Now().UnixNano()
-	res := IpData.InitIpData()
-
-	if v, ok := res.(error); ok {
-		log.Panic(v)
+	startTime := time.Now()
+	err := qqwry.Init(*datFile)
+	if err != nil {
+		log.Panic(err)
 	}
-	endTime := time.Now().UnixNano()
+	count, _ := qqwry.Count()
+	du := time.Since(startTime)
+	log.Println("IP 库加载完成 共加载:", count, " 条 IP 记录, 所花时间:", du)
 
-	log.Printf("IP 库加载完成 共加载:%d 条 IP 记录, 所花时间:%.1f ms\n", IpData.IpNum, float64(endTime-startTime)/1000000)
+	var server IPQueryServer
+	server.Port = *port
+	server.Run()
+}
 
-	// 下面开始加载 http 相关的服务
-	http.HandleFunc("/", findIp)
-
-	log.Printf("开始监听网络端口:%s", *port)
-
-	if err := http.ListenAndServe(fmt.Sprintf(":%s", *port), nil); err != nil {
-		log.Println(err)
-	}
+func (s *IPQueryServer) Run() {
+	http.HandleFunc("/", s.handleIPQuery)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", s.Port), nil))
 }
 
 // 查找 IP 地址的接口
-func findIp(w http.ResponseWriter, r *http.Request) {
-	res := NewResponse(w, r)
-
-	ip := r.Form.Get("ip")
+func (s *IPQueryServer) handleIPQuery(w http.ResponseWriter, r *http.Request) {
+	ip := r.FormValue("ip")
 
 	if ip == "" {
-		res.ReturnError(http.StatusBadRequest, 200001, "请填写 IP 地址")
+		http.Error(w, ("please input ip"), http.StatusBadRequest)
 		return
 	}
 
 	ips := strings.Split(ip, ",")
 
-	qqWry := NewQQwry()
+	qqWry, _ := qqwry.NewQQwry()
 
-	rs := map[string]resultQQwry{}
+	rs := map[string]qqwry.ResultQQwry{}
 	if len(ips) > 0 {
 		for _, v := range ips {
-			rs[v] = qqWry.Find(v)
+			q, err := qqWry.Query(v)
+			if err != nil {
+				continue
+			}
+			rs[v] = q
 		}
 	}
-
-	res.ReturnSuccess(rs)
+	resp, _ := json.MarshalIndent(rs, " ", "\t")
+	w.Header().Set("Content-Type", "application/json; charset=UTF8")
+	io.WriteString(w, string(resp))
 }

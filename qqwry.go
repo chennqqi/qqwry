@@ -59,6 +59,13 @@ func init() {
 	ERR_QQWRY_NOT_INIT = errors.New("qqwry not init")
 }
 
+func Count() (int64, error) {
+	if ipData == nil {
+		return 0, ERR_QQWRY_ALREADY_INIT
+	}
+	return ipData.ipNum, nil
+}
+
 // 初始化ip库数据到内存中
 func Init(qqwryDatPath string) error {
 	if ipData != nil {
