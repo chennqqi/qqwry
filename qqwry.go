@@ -60,24 +60,24 @@ func init() {
 }
 
 func Count() (int64, error) {
-	if ipData == nil {
-		return 0, ERR_QQWRY_ALREADY_INIT
+	current := ipData
+	if current == nil {
+		return 0, ERR_QQWRY_NOT_INIT
 	}
-	return ipData.ipNum, nil
+	return current.ipNum, nil
 }
 
 // 初始化ip库数据到内存中
 func Init(qqwryDatPath string) error {
-	if ipData != nil {
-		return ERR_QQWRY_ALREADY_INIT
-	}
+	//	if ipData != nil {
+	//		return ERR_QQWRY_ALREADY_INIT
+	//	}
 
 	// 判断文件是否存在
 	_, err := os.Stat(qqwryDatPath)
 	if err != nil && os.IsNotExist(err) {
 		return err
 	}
-
 	var fd fileData
 
 	tmpData, err := ioutil.ReadFile(qqwryDatPath)
@@ -98,11 +98,12 @@ func Init(qqwryDatPath string) error {
 
 // 新建 qqwry  类型
 func NewQQwry() (QQWry, error) {
-	if ipData == nil {
+	current := ipData
+	if current == nil {
 		return nil, ERR_QQWRY_NOT_INIT
 	}
 	return &qqwry{
-		ipdata: ipData,
+		ipdata: current,
 	}, nil
 }
 
